@@ -1,0 +1,168 @@
+library(data.table)
+library(ggplot2)
+library(mlr3)
+library(mlr3learners )
+library(mlr3tuning)
+library(mlr3mbo)
+library(glmnet)
+library(OpenML)
+library(mlr3pipelines)
+library(mlr3filters)
+library(tidyr)
+set.seed(732)
+
+future::plan("multisession")
+
+setwd("C:/Users/alber/Dropbox/3. år UNI/Interpretable Machine Learning/Data")
+data_test = fread("C:/Users/alber/Dropbox/3. år UNI/Interpretable Machine Learning/Data/Motor vehicle insurance data.csv")
+
+data = fread("Motor vehicle insurance data.csv")
+
+
+cond_1 = which(data$Distribution_channel != 1 & data$Distribution_channel != 0)
+data$Distribution_channel[cond_1] = matrix(data= NA, nrow=length(cond_1))
+
+#Initialize data
+data$ID = as.factor(data$ID)
+data$Distribution_channel = as.factor(data$Distribution_channel)
+#data$Lapse = as.factor(data$Lapse)
+data$Payment = as.factor(data$Payment)
+data$Type_risk = as.factor(data$Type_risk)
+data$Area = as.factor(data$Area)
+data$Second_driver = as.factor(data$Second_driver)
+data$N_doors = as.factor(data$N_doors)
+data$Type_fuel = as.factor(data$Type_fuel)
+
+data$Date_start_contract = as.Date(data$Date_start_contract, format = "%d-%m-%Y")
+data$Date_start_contract = as.numeric(data$Date_start_contract)
+data$Date_birth = as.Date(data$Date_birth, format = "%d-%m-%Y")
+data$Date_birth = as.numeric(data$Date_birth)
+data$Date_driving_licence = as.Date(data$Date_driving_licence, format = "%d-%m-%Y")
+data$Date_driving_licence = as.numeric(data$Date_driving_licence)
+#data$Date_lapse = as.Date(data$Date_lapse, format = "%d/%m/%Y")
+#data$Date_lapse = as.numeric(data$Date_lapse)
+
+data_num = data[,lapply(.SD, mean, na.rm = TRUE), by = ID, .SDcols = is.numeric]
+data_num = data_num[,-c("Lapse", "Premium", "N_claims_year","N_claims_history")]
+
+data_fac = data[,lapply(.SD, function(x) x[1]), by = ID, .SDcols = is.factor]
+
+data = merge(data_num, data_fac[,-1], by = "ID")[,-1]
+rm(data_fac,data_num)
+#Histogram for factor vancol = #Histogram for factor variables
+data_plot_fac = data_fac[,-c(1,2)] %>% pivot_longer(cols = everything(),
+                                                    names_to = "covariates",
+                                                    values_to = "level")
+
+ggplot(data_plot_fac, aes(x = covariates, fill = as.factor(level))) + 
+  geom_bar(position = "stack") +
+  theme_minimal() +
+  labs(x = "Covariate", y = "Count", fill = "Level",
+       title = "Levels per feature") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  scale_fill_manual(values = c(
+    "7" = "#8c510a",
+    "6" = "#01665e",
+    "5" = "#bf812d",
+    "4" = "#35978f",
+    "3" = "#dfc27d",
+    "2" = "#80cdc1",
+    "1" = "#f6e8c3",
+    "0" = "#c7eae5",
+    
+    "P" = "#543005",
+    "D" = "#003c30",
+    
+    "NA" = "#f5f5f5"
+  ))
+
+
+#Log transformed data of costs
+ggplot(data, aes(x = log(Cost_claims_year))) + 
+  geom_histogram(color = "#dfc27d", fill = "#f6e8c3") +
+  theme_minimal()
+
+
+
+
+
+
+data_classif = data[, Claims := as.integer(Cost_claims_year > 0)]
+data_classif = data_classif[,-("Cost_claims_year")]
+
+task_classif_impute = as_task_classif(data_classif, target="Claims")
+
+task_classif_impute$set_col_roles("Claims", c("target", "stratum"))
+
+# Classification models
+graph_classif = po("imputemean", affect_columns = selector_name("Length")) %>>%  
+  po("imputesample", affect_columns = selector_type("factor")) %>>% 
+  po("encode") %>>% 
+  po("scale")
+
+lrn_classif_featureless = as_learner(graph_classif %>>% lrn("classif.featureless", predict_type="prob"))
+
+
+lrn_classif_glmnet = as_learner(graph_classif %>>% lrn("classif.glmnet", predict_type="prob",s = to_tune(0,1), alpha = to_tune(0,1)))
+
+at_classif_glmnet = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                               learner = lrn_classif_glmnet,
+                               resampling = rsmp("cv", folds = 3),
+                               measure = msr("classif.auc"),
+                               terminator = trm("evals", n_evals = 10))
+
+lrn_classif_xgboost = as_learner(graph_classif %>>% lrn("classif.xgboost", predict_type="prob",eta = to_tune(0.1,0.3), nrounds = to_tune(100,500), max_depth = to_tune(1,10)))
+
+at_classif_xgboost = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                                learner = lrn_classif_xgboost,
+                                resampling = rsmp("cv", folds = 3),
+                                measure = msr("classif.auc"),
+                                terminator = trm("evals", n_evals = 10))
+
+lrn_classif_ranger = as_learner(graph_classif %>>% lrn("classif.ranger", predict_type="prob",mtry.ratio = to_tune(0.1,1), min.node.size = to_tune(p_int(1,50))))
+
+at_classif_ranger = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                               learner = lrn_classif_ranger,
+                               resampling = rsmp("cv", folds = 3),
+                               measure = msr("classif.auc"),
+                               terminator = trm("evals", n_evals = 10))
+
+
+lrn_classif_featureless$id = "classif featureless"
+at_classif_glmnet$id = "auto classif glmnet"
+at_classif_ranger$id = "auto classif ranger"
+at_classif_xgboost$id = "auto classif xgboost"
+
+task_classif_impute$id = "classif impute"
+
+
+design_classif = benchmark_grid(
+  tasks = task_classif_impute,
+  learners = list(lrn_classif_featureless, at_classif_glmnet, 
+                  at_classif_ranger, at_classif_xgboost),
+  resamplings = rsmp("cv", folds = 3)
+)
+
+design_classif
+
+results = benchmark(design = design_classif)
+warnings()
+results$aggregate(list(msr("classif.auc"),
+                       msr("classif.bbrier")))
+
+results$prob
+
+#lrn_classif_featureless$train(task_classif_impute)
+#at_classif_glmnet$train(task_classif_impute)
+#at_classif_ranger$train(task_classif_impute)
+
+#lrn_classif_featureless$plot(horizontal = TRUE)
+
+
+#lrn_classif_logreg$train(task_classif_impute)
+#at_classif_xgboost$train(task_classif_impute)
+#predict_ranger = at_classif_ranger$predict(task_classif_impute)
+#at_classif_xgboost$train(task_classif_impute)
+#predict = at_classif_xgboost$predict(task_classif_impute)
+#predict$score()
+#predict_ranger$score()
