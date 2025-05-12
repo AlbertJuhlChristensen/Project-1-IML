@@ -1,0 +1,102 @@
+#REMEMBER TO INSERT THE DATA MANIPULATION
+
+data_freq = data[data$Cost_claims_year != 0 & data$freq != 0]
+data_freq = data_freq[,-c("Cost_claims_year","Claims")]
+
+data_freq = data_freq[]
+
+data_y = data[data$Cost_claims_year != 0]
+data_y = data_y[, Claim_size := Cost_claims_year/R_Claims_history]
+data_y = data_y[,-c("Cost_claims_year", "R_Claims_history")]
+data_y = data_y[data_y$Claim_size != Inf]
+
+
+
+task_regr_freq = as_task_regr(data_freq, target="R_Claims_history")
+task_regr_freq$set_col_roles("R_Claims_history", c("target", "stratum"))
+
+task_regr_y = as_task_regr(data_y, target="Claim_size")
+task_regr_y$set_col_roles("Claim_size", c("target", "stratum"))
+
+
+lrn_regr_featureless = as_learner(graph_classif %>>% lrn("regr.featureless"))
+
+lrn_regr_log = as_learner(ppl("targettrafo",
+                                graph = as_learner(graph_classif %>>% lrn("regr.lm")),
+                              targetmutate.trafo = function(x) log(x),
+                              targetmutate.inverter = function(x) list(response = exp(x$response))))
+
+lrn_regr_glmnet = as_learner(graph_classif %>>% lrn("regr.glmnet", s = to_tune(0,1), alpha = to_tune(0,1)))
+
+at_regr_glmnet = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                               learner = lrn_regr_glmnet,
+                               resampling = rsmp("cv", folds = 3),
+                               measure = msr("regr.mae"),
+                               terminator = trm("evals", n_evals = 10))
+
+lrn_regr_glmnet_log = ppl("targettrafo",
+                          graph = as_learner(graph_classif %>>% lrn("regr.glmnet", s = to_tune(0,1), alpha = to_tune(0,1))),
+                          targetmutate.trafo = function(x) log(x),
+                          targetmutate.inverter = function(x) list(response = exp(x$response)))
+
+at_regr_glmnet_log = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                            learner = lrn_regr_glmnet_log,
+                            resampling = rsmp("cv", folds = 3),
+                            measure = msr("regr.mae"),
+                            terminator = trm("evals", n_evals = 10))
+
+lrn_regr_glmnet_poi = as_learner(graph_classif %>>% lrn("regr.glmnet", s = to_tune(0,1), alpha = to_tune(0,1), family = "poisson"))
+
+at_regr_glmnet_poi = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                            learner = lrn_regr_glmnet_poi,
+                            resampling = rsmp("cv", folds = 3),
+                            measure = msr("regr.mae"),
+                            terminator = trm("evals", n_evals = 10))
+
+lrn_regr_xgboost = as_learner(graph_classif %>>% lrn("regr.xgboost", eta = to_tune(0.1,0.3), nrounds = to_tune(100,500), max_depth = to_tune(1,10)))
+
+at_regr_xgboost = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                                learner = lrn_regr_xgboost,
+                                resampling = rsmp("cv", folds = 3),
+                                measure = msr("regr.mae"),
+                                terminator = trm("evals", n_evals = 10))
+
+lrn_regr_ranger = as_learner(graph_classif %>>% lrn("regr.ranger", mtry.ratio = to_tune(0.1,1), min.node.size = to_tune(p_int(1,50))))
+
+at_regr_ranger = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                               learner = lrn_regr_ranger,
+                               resampling = rsmp("cv", folds = 3),
+                               measure = msr("regr.mae"),
+                               terminator = trm("evals", n_evals = 10))
+
+lrn_regr_featureless$id = "regr featureless"
+lrn_regr_log$id = "regr log"
+at_regr_glmnet$id = "auto regr glmnet"
+at_regr_glmnet_log$id = "auto regr glmnet log"
+at_regr_glmnet_poi$id = "auto regr glmnet poisson"
+at_regr_ranger$id = "auto regr ranger"
+at_regr_xgboost$id = "auto regr xgboost"
+
+
+design_regr_freq = benchmark_grid(
+  tasks = task_regr_freq,
+  learners = list(lrn_regr_featureless, at_regr_glmnet_poi, at_regr_glmnet, at_regr_ranger, at_regr_xgboost),
+  resamplings = rsmp("cv", folds = 3)
+)
+
+design_regr_y = benchmark_grid(
+  tasks = task_regr_y,
+  learners = list(lrn_regr_featureless, lrn_regr_log, at_regr_glmnet_log, at_regr_ranger, at_regr_xgboost),
+  resamplings = rsmp("cv", folds = 3)
+)
+
+design_regr_freq
+design_regr_y
+
+results_freq = benchmark(design = design_regr_freq)
+results_y = benchmark(design = design_regr_y)
+
+
+results_y$aggregate(list(msr("regr.mse"),
+                         msr("regr.mae"),
+                         msr("regr.rsq")))
