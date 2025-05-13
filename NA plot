@@ -1,0 +1,9 @@
+na_count <- colSums(is.na(data))
+na_data <- data.frame(
+  variable = names(na_count),
+  count = na_count
+)
+na_data <- na_data %>% filter(count>0)
+length(data)
+ggplot(na_data, aes(x=variable, y=count/(nrow(data)))) + geom_bar(stat="identity", fill="#f6e8c3", color="#dfc27d")+theme_minimal()+
+  labs(x="Features countaining missing values", y="Percentage of the data", title="Overview of missing data")
