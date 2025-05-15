@@ -135,7 +135,7 @@ data_y = data_y[, Claim_size := Cost_claims_year/R_Claims_history]
 data_y = data_y[,-c("Cost_claims_year", "R_Claims_history")]
 
 
-task_classif = as_task_classif(data, target="Claims")
+task_classif = as_task_classif(data_classif, target="Claims")
 task_classif$set_col_roles("Claims", c("target", "stratum"))
 
 task_regr_freq = as_task_regr(data_freq, target="R_Claims_history")
