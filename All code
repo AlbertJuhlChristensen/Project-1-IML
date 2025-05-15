@@ -25,7 +25,6 @@ data$Distribution_channel[cond_1] = matrix(data= NA, nrow=length(cond_1))
 #Initialize data
 data$ID = as.factor(data$ID)
 data$Distribution_channel = as.factor(data$Distribution_channel)
-#data$Lapse = as.factor(data$Lapse)
 data$Payment = as.factor(data$Payment)
 data$Type_risk = as.factor(data$Type_risk)
 data$Area = as.factor(data$Area)
