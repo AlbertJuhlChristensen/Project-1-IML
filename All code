@@ -268,7 +268,7 @@ at_regr_xgboost_log$id = "auto regr xgboost log"
 
 #Classification benchmark grid
 design_classif = benchmark_grid(
-  tasks = task_classif_impute,
+  tasks = task_classif,
   learners = list(lrn_classif_featureless, lrn_classif_logreg, at_classif_glmnet, 
                   at_classif_ranger, at_classif_xgboost),
   resamplings = rsmp("cv", folds = 3)
