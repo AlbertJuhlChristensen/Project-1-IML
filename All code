@@ -10,8 +10,6 @@ library(mlr3pipelines)
 library(mlr3filters)
 library(tidyr)
 library(dplyr)
-library(mclust)
-library(mlr3cluster)
 set.seed(732)
 
 future::plan("multisession")
