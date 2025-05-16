@@ -1,0 +1,91 @@
+data_task = data[,!"Claims"]
+
+graph = po("imputemean", affect_columns = selector_name("Length")) %>>%  
+    po("imputesample", affect_columns = selector_type("factor")) %>>% 
+    po("encode") %>>% 
+    po("scale")
+  # Three different learners
+lrn_classif = as_learner(graph %>>% lrn("classif.xgboost", predict_type="prob", eta=0.1008, nrounds=4, max_depth=289))
+lrn_freq= as_learner(graph %>>% lrn("regr.xgboost", eta=0.1876, nrounds = 2, max_depth=255) )
+lrn_y_tmp = as_learner(graph %>>% lrn("regr.xgboost", eta = 0.2093, nrounds = 2, max_depth = 211))
+lrn_y = as_learner(ppl("targettrafo", 
+                         graph = lrn_y_tmp,
+                         targetmutate.trafo = function(x) log(x),
+                         targetmutate.inverter = function(x) list(response=exp(x$response))))
+
+task_full = as_task_regr(data_task, target="Cost_claims_year")
+resampling = rsmp("cv", folds = 5)
+resampling$instantiate(task_full)
+resampling$iters
+seq_len(resampling$iters)
+results = list()
+for (i in 1:resampling$iters){
+  train_idx = resampling$train_set(i)
+  test_idx = resampling$test_set(i)
+  
+  train_data = data_task[train_idx]
+  test_data = data_task[test_idx]
+  
+  data_classif_cv = copy(train_data)[, Claims := as.integer(Cost_claims_year > 0)]
+  task_classif_cv = as_task_classif(data_classif_cv[, !c("Cost_claims_year","R_Claims_history")], target = "Claims")
+  
+  data_freq_cv = train_data[Cost_claims_year > 0 & R_Claims_history > 0]
+  task_freq_cv = as_task_regr(data_freq_cv[, !"Cost_claims_year"], target = "R_Claims_history")
+  
+  data_y_cv = copy(data_freq_cv)[, Claim_size := Cost_claims_year / R_Claims_history]
+  task_y_cv = as_task_regr(data_y_cv[, !"Cost_claims_year"], target = "Claim_size")
+  
+  #Train
+  lrn_classif$train(task_classif_cv)
+  lrn_freq$train(task_freq_cv)
+  lrn_y$train(task_y_cv)
+  #Predict
+  test_X_cv = test_data[,!"Cost_claims_year"]
+  pred_classif_cv = lrn_classif$predict_newdata(test_X_cv)$prob[,"1"]
+  pred_freq_cv = lrn_freq$predict_newdata(test_X_cv)$response
+  pred_y_cv = lrn_y$predict_newdata(test_X_cv)$response
+  pred_total_cv = pred_classif_cv * pred_freq_cv * pred_y_cv
+  
+  lrn_td = as_learner(graph %>>% lrn("regr.xgboost", objective="reg:tweedie", tweedie_variance_power=1.5))
+  task_td = as_task_regr(train_data, target="Cost_claims_year")
+  
+  lrn_td$train(task_td)
+  pred_td = lrn_td$predict_newdata(test_X_cv)$response
+  
+  actual = test_data$Cost_claims_year
+  mse_total = mean((pred_total_cv - actual)^2)
+  mae_total = mean(abs(pred_total_cv - actual))
+  mse_td = mean((pred_td-actual)^2)
+  mae_td = mean(abs(pred_td-actual))
+  base_train = mean(train_data$Cost_claims_year)
+  base = matrix(base_train,nrow=nrow(test_X_cv),ncol=1)
+  mse_base = mean((base-actual)^2)
+  mae_base = mean(abs(base-actual))
+  
+  results[[i]] <- data.table(
+    fold = i,
+    mse_td = mse_td,
+    mse_total = mse_total,
+    mse_base = mse_base,
+    mae_td = mae_td,
+    mae_total=mae_total,
+    mae_base = mae_base
+  )
+}
+
+results_all <- rbindlist(results)
+
+# Print tabel over alle fold
+print(results_all)
+
+# Samlet gennemsnit for hver type MSE
+summary <- results_all[, .(
+  mean_mse_td = mean(mse_td),
+  mean_mse_total = mean(mse_total),
+  mean_mse_base = mean(mse_base),
+  mean_mae_td = mean(mae_td),
+  mean_mae_total = mean(mae_total),
+  mean_mse_baseline = mean(mae_base)
+)]
+
+print(summary)
