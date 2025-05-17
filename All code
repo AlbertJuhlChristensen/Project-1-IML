@@ -14,10 +14,7 @@ set.seed(732)
 
 future::plan("multisession")
 
-setwd("C:/Users/nicol/OneDrive - University of Copenhagen/Desktop/3 år/IML/Aflevering 1")
-
 data = fread("Motor vehicle insurance data.csv")
-
 
 cond_1 = which(data$Distribution_channel != 1 & data$Distribution_channel != 0)
 data$Distribution_channel[cond_1] = matrix(data= NA, nrow=length(cond_1))
@@ -44,14 +41,9 @@ data_num = data_num[,-c("Lapse", "Premium", "N_claims_year", "N_claims_history")
 data_fac = data[,lapply(.SD, function(x) x[1]), by = ID, .SDcols = is.factor]
 data = merge(data_num, data_fac[,-1], by = "ID")[,-1]
 
-
-
-
-
-
-
-
-
+############
+## PLOTS  ##
+############
 
 data_plot_fac = data_fac[,-c(1,2)] %>% pivot_longer(cols = everything(),
                                                     names_to = "covariates",
@@ -116,12 +108,9 @@ ggplot(data[data$Cost_claims_year > 0], aes(x = log(Cost_claims_year/R_Claims_hi
         legend.background = element_rect(fill = "#fafafa"))
 
 
-
-
-
-
-
-
+##################
+## END OF PLOTS ##
+##################
 
 #Transforming data to 
 data_classif = data[, Claims := as.integer(Cost_claims_year > 0)]
@@ -132,8 +121,7 @@ data_freq = data_freq[,-c("Cost_claims_year","Claims")]
 
 data_y = data[data$Cost_claims_year != 0 & data$R_Claims_history != 0]
 data_y = data_y[, Claim_size := Cost_claims_year/R_Claims_history]
-data_y = data_y[,-c("Cost_claims_year", "R_Claims_history")]
-
+data_y = data_y[,-c("Cost_claims_year", "R_Claims_history", "Claims")]
 
 task_classif = as_task_classif(data_classif, target="Claims")
 task_classif$set_col_roles("Claims", c("target", "stratum"))
@@ -177,14 +165,14 @@ at_classif_ranger = auto_tuner(tuner = tnr("random_search", batch_size = 8),
                                terminator = trm("evals", n_evals = 10))
 
 #Regression learners
-lrn_regr_featureless = as_learner(graph_classif %>>% lrn("regr.featureless"))
+lrn_regr_featureless = as_learner(graph %>>% lrn("regr.featureless"))
 
 lrn_regr_log = as_learner(ppl("targettrafo",
-                              graph = as_learner(graph_classif %>>% lrn("regr.lm")),
+                              graph = as_learner(graph %>>% lrn("regr.lm")),
                               targetmutate.trafo = function(x) log(x),
                               targetmutate.inverter = function(x) list(response = exp(x$response))))
 
-lrn_regr_glmnet = as_learner(graph_classif %>>% lrn("regr.glmnet", s = to_tune(0,1), alpha = to_tune(0,1)))
+lrn_regr_glmnet = as_learner(graph %>>% lrn("regr.glmnet", s = to_tune(0,1), alpha = to_tune(0,1)))
 
 at_regr_glmnet = auto_tuner(tuner = tnr("random_search", batch_size = 8),
                             learner = lrn_regr_glmnet,
@@ -203,7 +191,7 @@ at_regr_glmnet_log = auto_tuner(tuner = tnr("random_search", batch_size = 8),
                                 measure = msr("regr.mae"),
                                 terminator = trm("evals", n_evals = 10))
 
-lrn_regr_glmnet_poi = as_learner(graph_classif %>>% lrn("regr.glmnet", s = to_tune(0,1), alpha = to_tune(0,1), family = "poisson"))
+lrn_regr_glmnet_poi = as_learner(graph %>>% lrn("regr.glmnet", s = to_tune(0,1), alpha = to_tune(0,1), family = "poisson"))
 
 at_regr_glmnet_poi = auto_tuner(tuner = tnr("random_search", batch_size = 8),
                                 learner = lrn_regr_glmnet_poi,
@@ -211,7 +199,7 @@ at_regr_glmnet_poi = auto_tuner(tuner = tnr("random_search", batch_size = 8),
                                 measure = msr("regr.mae"),
                                 terminator = trm("evals", n_evals = 10))
 
-lrn_regr_xgboost = as_learner(graph_classif %>>% lrn("regr.xgboost", eta = to_tune(0.1,0.3), nrounds = to_tune(100,500), max_depth = to_tune(1,10)))
+lrn_regr_xgboost = as_learner(graph %>>% lrn("regr.xgboost", eta = to_tune(0.1,0.3), nrounds = to_tune(100,500), max_depth = to_tune(1,10)))
 
 at_regr_xgboost = auto_tuner(tuner = tnr("random_search", batch_size = 8),
                              learner = lrn_regr_xgboost,
@@ -220,7 +208,7 @@ at_regr_xgboost = auto_tuner(tuner = tnr("random_search", batch_size = 8),
                              terminator = trm("evals", n_evals = 10))
 
 lrn_regr_xgboost_log = ppl("targettrafo",
-                           graph = as_learner(graph_classif %>>% lrn("regr.xgboost", eta = to_tune(0.1,0.3), nrounds = to_tune(100,500), max_depth = to_tune(1,10))),
+                           graph = as_learner(graph %>>% lrn("regr.xgboost", eta = to_tune(0.1,0.3), nrounds = to_tune(100,500), max_depth = to_tune(1,10))),
                            targetmutate.trafo = function(x) log(x),
                            targetmutate.inverter = function(x) list(response = exp(x$response)))
 
@@ -238,7 +226,7 @@ at_regr_ranger = auto_tuner(tuner = tnr("random_search", batch_size = 8),
                             measure = msr("regr.mae"),
                             terminator = trm("evals", n_evals = 10))
 
-lrn_regr_ranger_log = ppl("targettrafo", graph = as_learner(graph_classif %>>% lrn("regr.ranger", mtry.ratio = to_tune(0.1,1), min.node.size = to_tune(p_int(1,50)))),
+lrn_regr_ranger_log = ppl("targettrafo", graph = as_learner(graph %>>% lrn("regr.ranger", mtry.ratio = to_tune(0.1,1), min.node.size = to_tune(p_int(1,50)))),
                                                 targetmutate.trafo = function(x) log(x),
                                                 targetmutate.inverter = function(x) list(response = exp(x$response)))
 
@@ -276,8 +264,16 @@ design_classif = benchmark_grid(
 
 #Classification results
 results = benchmark(design = design_classif)
-results$aggregate(list(msr("classif.auc"),,
+results$aggregate(list(msr("classif.auc"),
                        msr("classif.bbrier")))
+final_classif_at = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                           learner = lrn_classif_xgboost,
+                           resampling = rsmp("cv", folds = 5),
+                           measure = msr("classif.auc"),
+                           terminator = trm("evals", n_evals = 10))
+
+final_classif_at$train(task_classif)
+final_classif_at$archive$best()
 
 #Regression benchmark grid
 design_regr_freq = benchmark_grid(
@@ -297,8 +293,101 @@ results_freq = benchmark(design = design_regr_freq)
 results_freq$aggregate(list(msr("regr.mse"),
                          msr("regr.mae")))
 
+final_freq_at =  auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                            learner = lrn_regr_xgboost,
+                            resampling = rsmp("cv", folds = 5),
+                            measure = msr("regr.mae"),
+                            terminator = trm("evals", n_evals = 10))
+
+final_freq_at$train(task_regr_freq)
+final_freq_at$archive$best()
+
 results_y = benchmark(design = design_regr_y)
 results_y$aggregate(list(msr("regr.mae"),
-                         msr("regr.mape"),
-                         msr("regr.rmsle")))
+                         msr("regr.mape"))
+
+final_y_at = auto_tuner(tuner = tnr("random_search", batch_size = 8),
+                            learner = lrn_regr_xgboost_log,
+                            resampling = rsmp("cv", folds = 5),
+                            measure = msr("regr.mae"),
+                            terminator = trm("evals", n_evals = 10))
+final_y_at$train(task_regr_y)
+final_model_at$archive$best()
+
+# Cross validation between Tweedie, three-step and featureless
+data_task = data[,!"Claims"]
+task_full = as_task_regr(data_task, target="Cost_claims_year")
+resampling = rsmp("cv", folds = 5)
+resampling$instantiate(task_full)
+resampling$iters
+results = list()
+for (i in 1:resampling$iters){
+  train_idx = resampling$train_set(i)
+  test_idx = resampling$test_set(i)
+  
+  train_data = data_task[train_idx]
+  test_data = data_task[test_idx]
+  
+  data_classif_cv = copy(train_data)[, Claims := as.integer(Cost_claims_year > 0)]
+  task_classif_cv = as_task_classif(data_classif_cv[, !c("Cost_claims_year","R_Claims_history")], target = "Claims")
+  
+  data_freq_cv = train_data[Cost_claims_year > 0 & R_Claims_history > 0]
+  task_freq_cv = as_task_regr(data_freq_cv[, !"Cost_claims_year"], target = "R_Claims_history")
+  
+  data_y_cv = copy(data_freq_cv)[, Claim_size := Cost_claims_year / R_Claims_history]
+  data_y_cv = data_y_cv[,!"R_Claims_history"]
+  task_y_cv = as_task_regr(data_y_cv[, !"Cost_claims_year"], target = "Claim_size")
+  
+  #Train
+  lrn_classif$train(task_classif_cv)
+  lrn_freq$train(task_freq_cv)
+  lrn_y$train(task_y_cv)
+  #Predict
+  test_X_cv = test_data[,!"Cost_claims_year"]
+  pred_classif_cv = lrn_classif$predict_newdata(test_X_cv)$prob[,"1"]
+  pred_freq_cv = lrn_freq$predict_newdata(test_X_cv)$response
+  pred_y_cv = lrn_y$predict_newdata(test_X_cv)$response
+  
+  pred_total_cv = pred_classif_cv * pred_freq_cv * pred_y_cv
+  
+  lrn_td = as_learner(graph %>>% lrn("regr.xgboost", objective="reg:tweedie", tweedie_variance_power=1.5))
+  task_td = as_task_regr(train_data[,!"R_Claims_history"], target="Cost_claims_year")
+  
+  lrn_td$train(task_td)
+  pred_td = lrn_td$predict_newdata(test_X_cv)$response
+  
+  actual = test_data$Cost_claims_year
+  mse_total = mean((pred_total_cv - actual)^2)
+  mae_total = mean(abs(pred_total_cv - actual))
+  mse_td = mean((pred_td-actual)^2)
+  mae_td = mean(abs(pred_td-actual))
+  base_train = mean(train_data$Cost_claims_year)
+  base = matrix(base_train,nrow=nrow(test_X_cv),ncol=1)
+  mse_base = mean((base-actual)^2)
+  mae_base = mean(abs(base-actual))
+  
+  results[[i]] <- data.table(
+    fold = i,
+    mse_td = mse_td,
+    mse_total = mse_total,
+    mse_base = mse_base,
+    mae_td = mae_td,
+    mae_total = mae_total,
+    mae_base = mae_base
+  )
+}
+
+results_all <- rbindlist(results)
+
+
+summary <- results_all[, .(
+  mean_mse_td = mean(mse_td),
+  mean_mse_total = mean(mse_total),
+  mean_mse_base = mean(mse_base),
+  mean_mae_td = mean(mae_td),
+  mean_mae_total = mean(mae_total),
+  mean_mae_base = mean(mae_base)
+)]
+
+summary
 
